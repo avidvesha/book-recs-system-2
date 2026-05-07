@@ -22,15 +22,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Artifact paths — update these to match your deployment ───────────────────
-BASE = os.getenv("ARTIFACTS_DIR", "./artifacts")
+BASE = "artifacts"
 ARTIFACTS = {
     "cbf_sim_matrix": f"{BASE}/cbf_sim_matrix.npy",
     "cbf_meta":       f"{BASE}/cbf_meta.pkl",
     "svd_model":      f"{BASE}/svd_model.pkl",
     "ratings_df":     f"{BASE}/ratings_filtered.pkl",
 }
-BOOKS_CSV   = os.getenv("BOOKS_CSV",   "./books_with_image_url.csv")
-EVAL_CSV    = os.getenv("EVAL_CSV",    "./evaluations.csv")
+BOOKS_CSV   = "books_with_image_url.csv"
+EVAL_CSV    = "evaluations.csv"
 N_RANDOM    = 10   # books shown for selection
 N_RECS      = 10   # recommendations returned
 
