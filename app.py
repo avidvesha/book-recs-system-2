@@ -3,8 +3,9 @@ import pandas as pd
 import numpy as np
 import pickle
 import os
-import csv
 from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -29,8 +30,9 @@ ARTIFACTS = {
     "svd_model":      f"{BASE}/svd_model.pkl",
     "ratings_df":     f"{BASE}/ratings_filtered.pkl",
 }
-BOOKS_CSV   = "books_with_image_url.csv"
-EVAL_CSV    = "evaluations.csv"
+BOOKS_CSV        = "books_with_image_url.csv"
+GSHEET_NAME      = "book_recommender_evaluations"  # name of your Google Sheet
+GSHEET_WORKSHEET = "evaluations"                   # worksheet/tab name
 N_RANDOM    = 10   # books shown for selection
 N_RECS      = 10   # recommendations returned
 
@@ -178,25 +180,64 @@ def recommend_from_books(read_titles, art, n=10, alpha=0.8):
     return df, None
 
 
+# ── Google Sheets client (cached so we only auth once per session) ────────────
+@st.cache_resource(show_spinner=False)
+def get_gsheet_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds  = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scopes
+    )
+    return gspread.authorize(creds)
+
+
+def get_or_create_worksheet(client):
+    """Open the target sheet and worksheet, creating the header row if needed."""
+    try:
+        sheet = client.open(GSHEET_NAME)
+    except gspread.SpreadsheetNotFound:
+        sheet = client.create(GSHEET_NAME)
+
+    try:
+        ws = sheet.worksheet(GSHEET_WORKSHEET)
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=GSHEET_WORKSHEET, rows=1000, cols=10)
+
+    # Write header only if the sheet is empty
+    if ws.row_count == 0 or not ws.get_all_values():
+        ws.append_row([
+            "timestamp",
+            "selected_books",
+            "recommended_titles",
+            "hybrid_scores",
+            "satisfaction_rating",
+            "found_helpful",
+            "comments",
+        ], value_input_option="RAW")
+
+    return ws
+
+
 # ── Evaluation helpers ────────────────────────────────────────────────────────
 def save_evaluation(selected_books, recs_df, rating, helpful, comments):
-    file_exists = os.path.isfile(EVAL_CSV)
-    with open(EVAL_CSV, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow([
-                "timestamp", "selected_books", "recommended_titles",
-                "satisfaction_rating", "found_helpful", "comments"
-            ])
-        writer.writerow([
+    """Append one evaluation row to the Google Sheet."""
+    try:
+        client = get_gsheet_client()
+        ws     = get_or_create_worksheet(client)
+        ws.append_row([
             datetime.now().isoformat(),
             " | ".join(selected_books),
-            " | ".join(recs_df["Title"].tolist()) if recs_df is not None else "",
-            " | ".join(recs_df["Hybrid Score"].astype(str).tolist()) if recs_df is not None else "",
+            " | ".join(recs_df["Title"].tolist())                      if recs_df is not None else "",
+            " | ".join(recs_df["Hybrid Score"].astype(str).tolist())   if recs_df is not None else "",
             rating,
             helpful,
             comments,
-        ])
+        ], value_input_option="RAW")
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 
 # ── Session state init ────────────────────────────────────────────────────────
@@ -409,9 +450,12 @@ if st.session_state.recommendations is not None:
             submitted = st.form_submit_button("Submit feedback", type="primary")
 
         if submitted:
-            save_evaluation(selected, recs_df, rating, helpful, comments)
-            st.session_state.eval_submitted = True
-            st.rerun()
+            ok, err = save_evaluation(selected, recs_df, rating, helpful, comments)
+            if ok:
+                st.session_state.eval_submitted = True
+                st.rerun()
+            else:
+                st.error(f"Failed to save feedback: {err}")
 
     else:
         st.success("Thanks for your feedback! It's been saved.")
