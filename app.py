@@ -192,6 +192,7 @@ def save_evaluation(selected_books, recs_df, rating, helpful, comments):
             datetime.now().isoformat(),
             " | ".join(selected_books),
             " | ".join(recs_df["Title"].tolist()) if recs_df is not None else "",
+            " | ".join(recs_df["Hybrid Score"].astype(str).tolist()) if recs_df is not None else "",
             rating,
             helpful,
             comments,
@@ -225,67 +226,110 @@ all_titles = cbf_df["title"].dropna().unique().tolist()
 
 # ── Step 1 · Pick your books ─────────────────────────────────────────────────
 st.markdown("## Pick books you've enjoyed")
-
-col1, col2 = st.columns([3, 1])
-with col2:
-    if st.button("Refresh list", use_container_width=True):
-        st.session_state.random_books = None
-        st.session_state.recommendations = None
-        st.session_state.eval_submitted = False
-
-if st.session_state.random_books is None:
-    st.session_state.random_books = np.random.choice(
-        all_titles, size=min(N_RANDOM, len(all_titles)), replace=False
-    ).tolist()
-
-with col1:
-    st.caption(f"Showing {N_RANDOM} of 8730 randomly selected books. Select at least one.")
-    st.caption("The books are all in English.")
-
-# Create a card-based book selection interface
-st.markdown("### Select books you've read:")
-st.caption(f"Click on a book card to select/deselect")
+st.caption("Search for books you've read, then click to select them.")
 
 books_df = art["books"]
 selected = st.session_state.selected_books.copy()
 
-# Create a grid of book cards
-cols = st.columns(5)  # 5 cards per row
-for idx, book_title in enumerate(st.session_state.random_books):
-    col = cols[idx % 5]
-    
-    book_row = books_df[books_df["title"] == book_title]
-    image_url = book_row["image_url"].values[0] if not book_row.empty and pd.notna(book_row["image_url"].values[0]) else None
-    
-    with col:
-        with st.container():
-            # Create a card-like container
-            is_selected = book_title in selected
+# Search bar
+search_query = st.text_input(
+    "Search for a book by title or author:",
+    placeholder="e.g., 'Harry Potter' or 'J.K. Rowling'",
+    label_visibility="collapsed"
+)
+
+# Filter books based on search query
+if search_query.strip():
+    search_lower = search_query.lower()
+    # Search in both title and authors columns
+    mask = (
+        books_df["title"].str.lower().str.contains(search_lower, na=False) |
+        books_df["raw_authors"].str.lower().str.contains(search_lower, na=False)
+    )
+    search_results = books_df[mask]["title"].dropna().unique().tolist()
+    # Limit results to avoid overwhelming the UI
+    search_results = search_results[:50]
+else:
+    search_results = []
+
+# Display search results or prompt
+if search_query.strip():
+    if search_results:
+        st.caption(f"Found {len(search_results)} book(s)")
+        
+        # Create a grid of book cards
+        cols = st.columns(5)  # 5 cards per row
+        for idx, book_title in enumerate(search_results):
+            col = cols[idx % 5]
             
-            # Display image
-            if image_url:
-                try:
-                    st.image(image_url, use_container_width=True)
-                except:
-                    st.markdown("📖")
-            else:
-                st.markdown("📖")
+            book_row = books_df[books_df["title"] == book_title]
+            image_url = book_row["image_url"].values[0] if not book_row.empty and pd.notna(book_row["image_url"].values[0]) else None
             
-            # Display title as a button/selector with color change based on selection
-            if st.button(
-                f"{book_title}",
-                key=f"book_card_{book_title}",
-                use_container_width=True,
-                type="primary" if is_selected else "secondary"
-            ):
-                if book_title in selected:
-                    selected.remove(book_title)
-                else:
-                    selected.append(book_title)
-                st.session_state.selected_books = selected
-                st.rerun()
+            with col:
+                with st.container():
+                    # Create a card-like container
+                    is_selected = book_title in selected
+                    
+                    # Display image
+                    if image_url:
+                        try:
+                            st.image(image_url, use_container_width=True)
+                        except:
+                            st.markdown("📖")
+                    else:
+                        st.markdown("📖")
+                    
+                    # Display title as a button/selector with color change based on selection
+                    if st.button(
+                        f"{book_title}",
+                        key=f"book_card_{book_title}",
+                        use_container_width=True,
+                        type="primary" if is_selected else "secondary"
+                    ):
+                        if book_title in selected:
+                            selected.remove(book_title)
+                        else:
+                            selected.append(book_title)
+                        st.session_state.selected_books = selected
+                        st.rerun()
+    else:
+        st.info(f"No books found matching '{search_query}'. Try a different search.")
+else:
+    st.info("👆 Start typing to search for books by title or author")
 
 st.session_state.selected_books = selected
+
+# ── Show selected books ───────────────────────────────────────────────────────
+if selected:
+    st.markdown("### Your selected books:")
+    cols = st.columns(5)  # 5 cards per row
+    for idx, book_title in enumerate(selected):
+        col = cols[idx % 5]
+        
+        book_row = books_df[books_df["title"] == book_title]
+        image_url = book_row["image_url"].values[0] if not book_row.empty and pd.notna(book_row["image_url"].values[0]) else None
+        
+        with col:
+            with st.container():
+                # Display image
+                if image_url:
+                    try:
+                        st.image(image_url, use_container_width=True)
+                    except:
+                        st.markdown("📖")
+                else:
+                    st.markdown("📖")
+                
+                # Display title as remove button
+                if st.button(
+                    f"✓ {book_title}",
+                    key=f"remove_book_{book_title}",
+                    use_container_width=True,
+                    type="primary"
+                ):
+                    selected.remove(book_title)
+                    st.session_state.selected_books = selected
+                    st.rerun()
 
 # ── Alpha slider ──────────────────────────────────────────────────────────────
 # with st.expander("⚙️ Advanced — blending weight", expanded=False):
